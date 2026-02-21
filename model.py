@@ -52,28 +52,43 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        # TODO: ====== 步骤 1: 计算 Q, K, V ======
+        # 输入: x 的形状为 (B, T, C)，其中 B=batch_size, T=序列长度, C=n_embd(嵌入维度)
+        # 使用 self.c_attn 线性层将 x 投影到 3*C 维度，然后沿 dim=2 切分为三份，分别得到 q, k, v
+        # 每份的形状为 (B, T, C)
+        # 然后将每个张量 reshape 为多头形式:
+        #   先 view 为 (B, T, n_head, head_size)，其中 head_size = C // n_head
+        #   再 transpose(1, 2) 变为 (B, n_head, T, head_size)
+        # 提示: q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        raise NotImplementedError("TODO: 计算 Q, K, V 并 reshape 为多头形式")
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
-        else:
-            # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        # TODO: ====== 步骤 2: 计算注意力 ======
+        # 核心数学公式: Attention(Q, K, V) = softmax(Q @ K^T / sqrt(d_k)) @ V
+        # 其中 d_k = head_size = C // n_head
+        #
+        # 如果 self.flash 为 True (PyTorch >= 2.0):
+        #   使用高效的 Flash Attention:
+        #   y = torch.nn.functional.scaled_dot_product_attention(q, k, v, ...)
+        #   参数: attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True
+        #
+        # 如果 self.flash 为 False (手动实现):
+        #   (a) 计算注意力分数: att = (Q @ K^T) * (1/sqrt(d_k))
+        #       形状变化: (B, nh, T, hs) @ (B, nh, hs, T) -> (B, nh, T, T)
+        #   (b) 应用因果掩码: 将 self.bias[:,:,:T,:T] == 0 的位置填充为 -inf
+        #       因果掩码确保每个位置只能关注到它之前（含自身）的位置
+        #   (c) 对最后一个维度做 softmax 归一化
+        #   (d) 应用 attention dropout: self.attn_dropout(att)
+        #   (e) 用注意力权重加权 V: y = att @ v
+        #       形状变化: (B, nh, T, T) @ (B, nh, T, hs) -> (B, nh, T, hs)
+        raise NotImplementedError("TODO: 计算因果自注意力（支持 Flash Attention 和手动实现两种路径）")
 
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+        # TODO: ====== 步骤 3: 合并多头输出并通过输出投影 ======
+        # 将 y 从 (B, n_head, T, head_size) 变回 (B, T, C):
+        #   先 transpose(1, 2) 得到 (B, T, n_head, head_size)
+        #   再 .contiguous().view(B, T, C) 合并所有头的输出
+        # 最后通过输出投影层 self.c_proj 和残差 dropout self.resid_dropout
+        # 返回形状为 (B, T, C) 的张量
+        raise NotImplementedError("TODO: 合并多头输出并通过输出投影层")
 
 class MLP(nn.Module):
 
@@ -85,11 +100,18 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
+        # TODO: ====== MLP 前馈网络 ======
+        # 输入: x 的形状为 (B, T, C)，其中 C = n_embd
+        # MLP 的结构为: Linear(C -> 4C) -> GELU -> Linear(4C -> C) -> Dropout
+        #
+        # 具体步骤:
+        # (1) 通过 self.c_fc 将维度从 C 扩展到 4*C: (B, T, C) -> (B, T, 4*C)
+        # (2) 通过 self.gelu 激活函数（GELU 比 ReLU 更平滑，是 GPT 系列的标准选择）
+        #     GELU(x) = x * Φ(x)，其中 Φ 是标准正态分布的累积分布函数
+        # (3) 通过 self.c_proj 将维度从 4*C 投影回 C: (B, T, 4*C) -> (B, T, C)
+        # (4) 通过 self.dropout 进行正则化
+        # 返回形状为 (B, T, C) 的张量
+        raise NotImplementedError("TODO: 实现 MLP 前馈网络的前向传播")
 
 class Block(nn.Module):
 
@@ -101,9 +123,26 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
-        x = x + self.mlp(self.ln_2(x))
-        return x
+        # TODO: ====== Transformer Block 前向传播 ======
+        # 输入: x 的形状为 (B, T, C)
+        # GPT 使用 Pre-Norm 架构（先 LayerNorm 再做子层计算），不同于原始 Transformer 的 Post-Norm
+        #
+        # Pre-Norm Transformer Block 的结构:
+        # (1) 自注意力子层（带残差连接）:
+        #     x = x + self.attn(self.ln_1(x))
+        #     - 先对 x 做 LayerNorm (self.ln_1)
+        #     - 再通过因果自注意力 (self.attn)
+        #     - 最后加上残差连接 (x + ...)
+        #
+        # (2) MLP 子层（带残差连接）:
+        #     x = x + self.mlp(self.ln_2(x))
+        #     - 先对 x 做 LayerNorm (self.ln_2)
+        #     - 再通过 MLP 前馈网络 (self.mlp)
+        #     - 最后加上残差连接 (x + ...)
+        #
+        # 残差连接的作用: 缓解深层网络的梯度消失问题，使梯度可以直接回传到浅层
+        # 返回形状为 (B, T, C) 的张量
+        raise NotImplementedError("TODO: 实现 Transformer Block 的前向传播（Pre-Norm + 残差连接）")
 
 @dataclass
 class GPTConfig:
@@ -173,24 +212,46 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
-            x = block(x)
-        x = self.transformer.ln_f(x)
+        # TODO: ====== 步骤 1: 计算嵌入 ======
+        # 输入: idx 的形状为 (b, t)，是 token 索引（整数）
+        # (a) Token 嵌入: 用 self.transformer.wte(idx) 将 token 索引映射为向量
+        #     形状: (b, t) -> (b, t, n_embd)
+        # (b) 位置嵌入: 用 self.transformer.wpe(pos) 将位置索引映射为向量
+        #     形状: (t,) -> (t, n_embd)
+        # (c) 将 token 嵌入和位置嵌入相加，然后通过 self.transformer.drop 做 dropout
+        #     形状: (b, t, n_embd) + (t, n_embd) -> (b, t, n_embd)（广播机制）
+        raise NotImplementedError("TODO: 计算 token 嵌入 + 位置嵌入")
 
-        if targets is not None:
-            # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-        else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
-            loss = None
+        # TODO: ====== 步骤 2: 通过所有 Transformer Block ======
+        # 将嵌入向量依次通过 self.transformer.h 中的每一个 Block
+        # 使用 for 循环: for block in self.transformer.h: x = block(x)
+        # 每个 Block 的输入和输出形状都是 (b, t, n_embd)
+        raise NotImplementedError("TODO: 将嵌入依次通过所有 Transformer Block")
 
-        return logits, loss
+        # TODO: ====== 步骤 3: 最终 LayerNorm ======
+        # 通过最后的 LayerNorm: x = self.transformer.ln_f(x)
+        # 形状不变: (b, t, n_embd)
+        raise NotImplementedError("TODO: 应用最终的 LayerNorm")
+
+        # TODO: ====== 步骤 4: 计算 logits 和 loss ======
+        # 有两种情况:
+        #
+        # (A) 训练模式 (targets is not None):
+        #     - 用 self.lm_head 将隐藏状态映射到词表大小:
+        #       logits = self.lm_head(x)  # (b, t, n_embd) -> (b, t, vocab_size)
+        #     - 计算交叉熵损失:
+        #       loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        #       这里将 logits 展平为 (b*t, vocab_size)，targets 展平为 (b*t,)
+        #       ignore_index=-1 表示忽略标签为 -1 的位置
+        #
+        # (B) 推理模式 (targets is None):
+        #     - 只计算最后一个位置的 logits（优化推理速度）:
+        #       logits = self.lm_head(x[:, [-1], :])  # (b, 1, n_embd) -> (b, 1, vocab_size)
+        #       注意使用 [-1] 而不是 -1，以保留时间维度
+        #     - loss = None
+        #
+        # 返回: (logits, loss)
+        raise NotImplementedError("TODO: 计算 logits 和 loss（区分训练/推理模式）")
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -309,22 +370,34 @@ class GPT(nn.Module):
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
-        for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
-            # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / temperature
-            # optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            # apply softmax to convert logits to (normalized) probabilities
-            probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)
-            # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
-
-        return idx
+        # TODO: ====== 自回归文本生成 ======
+        # 输入: idx 形状为 (b, t)，是初始 token 序列
+        # 需要循环 max_new_tokens 次，每次生成一个新的 token 并追加到序列末尾
+        #
+        # 在每次循环中:
+        # (1) 裁剪上下文: 如果序列长度超过 self.config.block_size，只取最后 block_size 个 token
+        #     idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+        #
+        # (2) 前向传播: 调用 self(idx_cond) 获取 logits（忽略 loss）
+        #     logits 形状为 (b, 1, vocab_size)（因为推理模式只输出最后一个位置）
+        #
+        # (3) 温度缩放: logits = logits[:, -1, :] / temperature
+        #     temperature < 1.0 使分布更尖锐（更确定），> 1.0 使分布更平坦（更随机）
+        #     取 [:, -1, :] 后形状变为 (b, vocab_size)
+        #
+        # (4) Top-K 采样（可选）: 如果 top_k 不为 None:
+        #     - 用 torch.topk 找到前 k 大的值
+        #     - 将所有小于第 k 大值的 logits 设为 -inf
+        #     这样 softmax 后它们的概率就为 0
+        #
+        # (5) Softmax: probs = F.softmax(logits, dim=-1)
+        #     将 logits 转为概率分布，形状 (b, vocab_size)
+        #
+        # (6) 采样: idx_next = torch.multinomial(probs, num_samples=1)
+        #     从概率分布中采样一个 token，形状 (b, 1)
+        #
+        # (7) 拼接: idx = torch.cat((idx, idx_next), dim=1)
+        #     将新 token 追加到序列末尾，形状 (b, t+1)
+        #
+        # 循环结束后返回完整序列 idx
+        raise NotImplementedError("TODO: 实现自回归文本生成循环")
