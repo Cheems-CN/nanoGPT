@@ -33,6 +33,72 @@ from torch.nn import functional as F
 #           sample.py 同理，请确保这两个名字可被导入
 #
 # =============================================================================
+# 📐 代码规范 (请在实现每个 TODO 时遵循以下规范)
+# =============================================================================
+#
+# 命名规范:
+#   - 类名: PascalCase (如 CausalSelfAttention, GPTConfig)
+#   - 方法/函数名: snake_case (如 get_num_params, forward)
+#   - 变量名: snake_case (如 block_size, n_head)
+#   - 常量: UPPER_SNAKE_CASE (如有需要)
+#   - 私有方法: 前缀下划线 (如 _init_weights)
+#   - nn.Module 子层命名: 与 HuggingFace GPT-2 保持一致
+#     (c_attn, c_proj, c_fc, ln_1, ln_2, wte, wpe, ln_f, lm_head)
+#
+# 类型标注:
+#   - 所有公开方法的参数和返回值都应有类型标注
+#   - 示例:
+#     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None
+#                 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+#     def get_num_params(self, non_embedding: bool = True) -> int:
+#     def generate(self, idx: torch.Tensor, max_new_tokens: int,
+#                  temperature: float = 1.0, top_k: int | None = None
+#                  ) -> torch.Tensor:
+#
+# 文档字符串 (Google 风格):
+#   - 每个类和公开方法都需要 docstring
+#   - 格式示例:
+#     class MLP(nn.Module):
+#         """Transformer 前馈网络。
+#
+#         架构: Linear(C→4C) → GELU → Linear(4C→C) → Dropout
+#
+#         Args:
+#             config: 模型配置对象
+#         """
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         """前馈网络的前向传播。
+#
+#         Args:
+#             x: 输入张量，形状 (batch_size, seq_len, n_embd)
+#
+#         Returns:
+#             输出张量，形状与输入相同 (batch_size, seq_len, n_embd)
+#         """
+#
+# 断言与防御性编程:
+#   - 在关键位置添加 assert 验证维度/类型约束
+#   - 示例: assert config.n_embd % config.n_head == 0
+#   - 对不合法输入尽早报错，给出清晰的错误消息
+#
+# PyTorch 最佳实践:
+#   - 所有可学习参数必须通过 nn.Parameter 或 nn.Module 子模块注册
+#   - 非参数的持久张量（如因果掩码）使用 self.register_buffer()
+#   - __init__ 中只做层定义，不做前向计算
+#   - forward() 中避免原地操作 (inplace ops)，以免破坏自动求导
+#   - 在不需要梯度的地方使用 @torch.no_grad() 装饰器
+#
+# 代码风格:
+#   - 每行不超过 100 个字符（推荐；原项目约 120 字符宽）
+#   - 运算符两侧加空格: x = a + b，而非 x=a+b
+#   - 逗号后加空格: dict(a=1, b=2)，而非 dict(a=1,b=2)
+#   - 类之间空两行，方法之间空一行
+#   - import 分组: 标准库 → 第三方库 → 本地模块，组间空一行
+#   - 避免魔法数字，使用命名常量或 config 属性
+#     ✗ self.c_fc = nn.Linear(config.n_embd, 3072)
+#     ✓ self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd)
+#
+# =============================================================================
 
 
 # -----------------------------------------------------------------------------
@@ -48,6 +114,16 @@ from torch.nn import functional as F
 #   n_embd:     int = 768     — 嵌入维度（必须能被 n_head 整除）
 #   dropout:    float = 0.0   — Dropout 率
 #   bias:       bool = True   — 是否在 Linear/LayerNorm 中使用 bias
+#
+# 📐 规范提示:
+#   - 使用 @dataclass 装饰器 (已导入 from dataclasses import dataclass)
+#   - 每个字段都需要类型标注和默认值
+#   - 在字段上方或右侧添加注释说明含义
+#   - 示例:
+#     @dataclass
+#     class GPTConfig:
+#         """GPT 模型配置。"""
+#         block_size: int = 1024  # 最大序列长度
 # -----------------------------------------------------------------------------
 
 
@@ -64,6 +140,12 @@ from torch.nn import functional as F
 # 前向传播 forward(self, input):
 #   - 使用 F.layer_norm 进行归一化，eps=1e-5
 #   - 输入输出形状不变
+#
+# 📐 规范提示:
+#   - 用 nn.Parameter 包装可学习参数: self.weight = nn.Parameter(torch.ones(ndim))
+#   - bias 为 None 时用条件表达式: nn.Parameter(...) if bias else None
+#   - 类 docstring 说明"为什么不直接用 nn.LayerNorm"
+#   - forward 参数标注: def forward(self, input: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 
@@ -82,6 +164,17 @@ from torch.nn import functional as F
 #
 # 前向传播 forward(self, x):
 #   - 输入输出形状: (B, T, C) → (B, T, C)
+#
+# 📐 规范提示:
+#   - 子层命名与 GPT-2 一致: c_fc (升维), c_proj (降维), gelu, dropout
+#   - 用 config 属性代替硬编码: 4 * config.n_embd 而非字面量
+#   - forward 中每步一行，保持数据流清晰:
+#     x = self.c_fc(x)
+#     x = self.gelu(x)
+#     x = self.c_proj(x)
+#     x = self.dropout(x)
+#     return x
+#   - 类型标注: def forward(self, x: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 
@@ -109,6 +202,21 @@ from torch.nn import functional as F
 #     * 手动实现需要: 缩放点积 → 因果掩码 → softmax → dropout → 加权求和
 #     * 因果掩码: 每个位置只能看到自身及之前的位置（下三角矩阵）
 #   - 步骤 3: 合并多头输出 → 输出投影 → 残差 Dropout
+#
+# 📐 规范提示:
+#   - 子层命名: c_attn (QKV 合并投影), c_proj (输出投影),
+#               attn_dropout, resid_dropout
+#   - 实例属性保存常用值: self.n_head, self.n_embd, self.dropout
+#   - 用 hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+#     检测 Flash Attention 支持，保存为 self.flash
+#   - 非参数 buffer 用 register_buffer:
+#     self.register_buffer("bias",
+#         torch.tril(torch.ones(block_size, block_size))
+#              .view(1, 1, block_size, block_size))
+#   - forward 中用注释分隔三个步骤，标明张量形状变化:
+#     # (B, T, C) -> (B, T, 3C) -> 3 x (B, T, C)
+#     # (B, T, C) -> (B, nh, T, hs)
+#   - 用 .contiguous() 确保内存连续再 .view()
 # -----------------------------------------------------------------------------
 
 
@@ -127,6 +235,14 @@ from torch.nn import functional as F
 # 前向传播 forward(self, x):
 #   - 输入输出形状: (B, T, C)
 #   - 残差连接使梯度可以直接回传到浅层，缓解梯度消失
+#
+# 📐 规范提示:
+#   - 子层命名: ln_1, attn, ln_2, mlp (与 GPT-2 一致)
+#   - forward 极简——两行即可，保持表达力:
+#     x = x + self.attn(self.ln_1(x))
+#     x = x + self.mlp(self.ln_2(x))
+#   - 不要引入多余的中间变量，残差连接写成一行更清晰
+#   - 类型标注: def forward(self, x: torch.Tensor) -> torch.Tensor:
 # -----------------------------------------------------------------------------
 
 
@@ -207,4 +323,23 @@ from torch.nn import functional as F
 #   估算模型 FLOPS 利用率 (MFU)
 #   公式: FLOPs/token ≈ 6N + 12·L·H·Q·T（参考 PaLM 论文 Appendix B）
 #   与 A100 bf16 峰值 312 TFLOPS 比较
+#
+# 📐 规范提示:
+#   - __init__ 中用 self.config = config 保存配置，便于后续方法访问
+#   - nn.ModuleDict + dict() 语法构建 self.transformer，使键名可读:
+#     self.transformer = nn.ModuleDict(dict(
+#         wte = nn.Embedding(...),
+#         wpe = nn.Embedding(...),
+#         ...
+#     ))
+#   - Weight Tying 直接赋值: self.transformer.wte.weight = self.lm_head.weight
+#   - 权重初始化用 self.apply(self._init_weights) 遍历所有子模块
+#   - _init_weights 中用 isinstance() 判断模块类型，分别初始化
+#   - forward 的类型标注:
+#     def forward(self, idx: torch.Tensor,
+#                 targets: torch.Tensor | None = None
+#                 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+#   - generate 中用 F.softmax(dim=-1) 而非手动实现
+#   - from_pretrained 用 @classmethod 装饰，返回 cls 的实例
+#   - configure_optimizers 中用字典推导式分组参数，打印统计信息
 # -----------------------------------------------------------------------------

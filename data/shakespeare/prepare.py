@@ -35,4 +35,11 @@ import numpy as np
 #   - val.bin:   ~36,059 tokens
 #
 # 对比字符级: BPE 的 token 数量更少（约 1/3），因为每个 token 可以表示多个字符
+#
+# 📐 规范提示:
+#   - 文件路径用 os.path.join(os.path.dirname(__file__), ...) 确保路径正确
+#   - 下载前检查文件是否已存在: if not os.path.exists(input_file_path):
+#   - 文件读写统一指定编码: open(..., encoding='utf-8')
+#   - 用 encode_ordinary() 而非 encode()，前者不处理特殊 token
+#   - 打印统计: print(f"train has {len(train_ids):,} tokens")
 raise NotImplementedError("TODO: 实现 BPE 数据预处理")
