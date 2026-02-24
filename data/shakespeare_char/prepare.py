@@ -43,4 +43,19 @@ import numpy as np
 #   - 数据集约 1,115,394 个字符
 #   - vocab_size ≈ 65 个唯一字符
 #   - train: ~1,003,854 tokens, val: ~111,540 tokens
+#
+# 📐 规范提示:
+#   - 文件路径用 os.path.join(os.path.dirname(__file__), 'input.txt')
+#     确保无论从哪个目录运行脚本，路径都正确
+#   - 下载前检查文件是否已存在，避免重复下载:
+#     if not os.path.exists(input_file_path):
+#         ...
+#   - 字典推导构建映射: stoi = {ch: i for i, ch in enumerate(chars)}
+#   - encode/decode 用简洁的列表推导:
+#     def encode(s: str) -> list[int]:
+#         return [stoi[c] for c in s]
+#     def decode(l: list[int]) -> str:
+#         return ''.join([itos[i] for i in l])
+#   - 每步打印进度信息: print(f"train has {len(train_ids):,} tokens")
+#   - pickle 保存用 'wb' 模式: with open(path, 'wb') as f: pickle.dump(meta, f)
 raise NotImplementedError("TODO: 实现字符级数据预处理")

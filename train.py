@@ -129,6 +129,17 @@ def get_batch(split):
     #   4. 将 x, y 移到正确的设备上（GPU 时使用 pin_memory + non_blocking）
     #
     # 使用的全局变量: data_dir, block_size, batch_size, device_type, device
+    #
+    # 📐 规范提示:
+    #   - 类型标注: def get_batch(split: str) -> tuple[torch.Tensor, torch.Tensor]:
+    #   - 用 os.path.join 拼接路径，不要硬编码分隔符
+    #   - 用 torch.stack 将列表合并为批次张量
+    #   - 数据类型转换链: np.uint16 → .astype(np.int64) → torch.from_numpy
+    #   - GPU 传输的惯用模式:
+    #     if device_type == 'cuda':
+    #         x = x.pin_memory().to(device, non_blocking=True)
+    #     else:
+    #         x = x.to(device)
     raise NotImplementedError("TODO: 实现数据批次加载")
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
@@ -229,6 +240,13 @@ def estimate_loss():
     #   3. 将模型恢复为 train 模式
     #
     # 使用的变量: model, get_batch, eval_iters, ctx
+    #
+    # 📐 规范提示:
+    #   - 类型标注: def estimate_loss() -> dict[str, float]:
+    #   - 用 torch.zeros(eval_iters) 预分配 losses 张量，比 list.append 更高效
+    #   - 惯用模式: for k in range(eval_iters): losses[k] = loss.item()
+    #   - 最后取平均: losses.mean()
+    #   - 记得在返回前 model.train() 恢复训练模式
     raise NotImplementedError("TODO: 实现评估损失计算")
 
 # learning rate decay scheduler (cosine with warmup)
@@ -249,6 +267,18 @@ def get_lr(it):
     #
     # 使用的全局变量: learning_rate, warmup_iters, lr_decay_iters, min_lr
     # 需要用到: math.cos, math.pi
+    #
+    # 📐 规范提示:
+    #   - 类型标注: def get_lr(it: int) -> float:
+    #   - 用 early return 保持函数扁平，避免多层嵌套:
+    #     if it < warmup_iters:
+    #         return ...
+    #     if it > lr_decay_iters:
+    #         return ...
+    #     # 余弦退火阶段
+    #     ...
+    #   - 中间变量命名清晰: decay_ratio, coeff
+    #   - 可选: 添加 assert 0 <= decay_ratio <= 1 做防御性检查
     raise NotImplementedError("TODO: 实现余弦退火学习率调度器")
 
 # logging
@@ -310,6 +340,11 @@ while True:
         # TODO: ====== 核心训练步骤: 前向传播 + Loss 缩放 ======
         # 1. 在混合精度上下文 ctx 中执行前向传播: model(X, Y) → (logits, loss)
         # 2. 将 loss 除以 gradient_accumulation_steps（梯度累积的数学等价）
+        #
+        # 📐 规范提示:
+        #   - 用 with ctx: 包裹前向传播，保持缩进清晰
+        #   - loss 缩放用 loss = loss / gradient_accumulation_steps，不要用 /=
+        #     (避免原地操作影响计算图)
         raise NotImplementedError("TODO: 执行前向传播并缩放 loss")
 
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
@@ -318,12 +353,24 @@ while True:
         # TODO: ====== 核心训练步骤: 反向传播 ======
         # 使用 GradScaler 进行反向传播: scaler.scale(loss).backward()
         # GradScaler 防止 FP16 下梯度下溢，梯度自动累积到 param.grad
+        #
+        # 📐 规范提示:
+        #   - 一行即可: scaler.scale(loss).backward()
+        #   - 不要手动调用 loss.backward()，始终通过 scaler 以兼容所有 dtype
         raise NotImplementedError("TODO: 执行反向传播")
 
     # TODO: ====== 核心训练步骤: 梯度裁剪 + 优化器更新 + 梯度清零 ======
     # 1. 梯度裁剪 (如果 grad_clip != 0.0): 先 unscale_，再 clip_grad_norm_
     # 2. 优化器更新: scaler.step(optimizer) + scaler.update()
     # 3. 梯度清零: optimizer.zero_grad(set_to_none=True)
+    #
+    # 📐 规范提示:
+    #   - 按固定顺序执行: unscale → clip → step → update → zero_grad
+    #   - 梯度裁剪用条件判断包裹:
+    #     if grad_clip != 0.0:
+    #         scaler.unscale_(optimizer)
+    #         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+    #   - zero_grad 始终用 set_to_none=True 以节省内存
     raise NotImplementedError("TODO: 执行梯度裁剪、优化器更新和梯度清零")
 
     # timing and logging
