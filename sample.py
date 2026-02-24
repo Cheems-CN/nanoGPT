@@ -31,59 +31,39 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# model
-if init_from == 'resume':
-    # init from a model saved in a specific directory
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'])
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
-elif init_from.startswith('gpt2'):
-    # init from a given GPT-2 model
-    model = GPT.from_pretrained(init_from, dict(dropout=0.0))
+# TODO: ====== 模型加载 ======
+# 根据 init_from 的值加载模型:
+#
+# (A) init_from == 'resume': 从训练 checkpoint 加载
+#     1. 从 out_dir/ckpt.pt 加载 checkpoint（torch.load）
+#     2. 用 checkpoint['model_args'] 创建 GPTConfig 和 GPT 模型
+#     3. 处理 state_dict 中可能存在的 '_orig_mod.' 前缀（torch.compile 产生的）
+#     4. 加载权重: model.load_state_dict(state_dict)
+#
+# (B) init_from.startswith('gpt2'): 从预训练 GPT-2 加载
+#     model = GPT.from_pretrained(init_from, dict(dropout=0.0))
+#
+# 加载后: model.eval() → model.to(device) → 可选 torch.compile
+raise NotImplementedError("TODO: 实现模型加载")
 
-model.eval()
-model.to(device)
-if compile:
-    model = torch.compile(model) # requires PyTorch 2.0 (optional)
+# TODO: ====== 分词器加载 ======
+# 两种分词方案:
+#
+# (A) 自定义分词器（字符级等）:
+#     如果 checkpoint 中包含 dataset 信息，检查对应 data/ 目录下是否有 meta.pkl
+#     如果有，从 meta.pkl 加载 stoi/itos 映射，构建 encode/decode 函数
+#
+# (B) GPT-2 BPE 分词器（默认）:
+#     使用 tiktoken.get_encoding("gpt2") 加载 GPT-2 分词器
+#     encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
+#     decode = lambda l: enc.decode(l)
+raise NotImplementedError("TODO: 实现分词器加载")
 
-# look for the meta pickle in case it is available in the dataset folder
-load_meta = False
-if init_from == 'resume' and 'config' in checkpoint and 'dataset' in checkpoint['config']: # older checkpoints might not have these...
-    meta_path = os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
-    load_meta = os.path.exists(meta_path)
-if load_meta:
-    print(f"Loading meta from {meta_path}...")
-    with open(meta_path, 'rb') as f:
-        meta = pickle.load(f)
-    # TODO want to make this more general to arbitrary encoder/decoder schemes
-    stoi, itos = meta['stoi'], meta['itos']
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
-else:
-    # ok let's assume gpt-2 encodings by default
-    print("No meta.pkl found, assuming GPT-2 encodings...")
-    enc = tiktoken.get_encoding("gpt2")
-    encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
-    decode = lambda l: enc.decode(l)
-
-# encode the beginning of the prompt
-if start.startswith('FILE:'):
-    with open(start[5:], 'r', encoding='utf-8') as f:
-        start = f.read()
-start_ids = encode(start)
-x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
-
-# run generation
-with torch.no_grad():
-    with ctx:
-        for k in range(num_samples):
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(decode(y[0].tolist()))
-            print('---------------')
+# TODO: ====== 文本生成 ======
+# 1. 编码起始文本 start 为 token IDs（支持 "FILE:path" 格式从文件读取）
+# 2. 创建输入张量: (1, len(start_ids))，dtype=torch.long
+# 3. 在 torch.no_grad() 和混合精度上下文中:
+#    循环 num_samples 次:
+#      调用 model.generate(x, max_new_tokens, temperature, top_k)
+#      decode 生成的 token IDs 并打印
+raise NotImplementedError("TODO: 实现文本生成")
