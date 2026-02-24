@@ -114,21 +114,22 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 # poor man's data loader
 data_dir = os.path.join('data', dataset)
 def get_batch(split):
-    # We recreate np.memmap every batch to avoid a memory leak, as per
-    # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
-    if split == 'train':
-        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
-    else:
-        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
-    y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
-    if device_type == 'cuda':
-        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
-        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
-    else:
-        x, y = x.to(device), y.to(device)
-    return x, y
+    # TODO: ====== 数据加载器 ======
+    # 输入: split ('train' 或 'val')
+    # 输出: (x, y) 两个张量，形状均为 (batch_size, block_size)
+    #
+    # 实现要点:
+    #   1. 用 np.memmap 读取对应的 .bin 文件（train.bin 或 val.bin），dtype=np.uint16
+    #      - 每次调用都重新创建 memmap 以避免内存泄漏
+    #   2. 随机采样 batch_size 个起始位置（范围: 0 到 len(data)-block_size）
+    #   3. 对每个起始位置 i:
+    #      - x[i] = data[i : i+block_size]       ← 输入序列
+    #      - y[i] = data[i+1 : i+1+block_size]   ← 目标序列（右移一位）
+    #      - 转换为 int64 类型的 PyTorch 张量
+    #   4. 将 x, y 移到正确的设备上（GPU 时使用 pin_memory + non_blocking）
+    #
+    # 使用的全局变量: data_dir, block_size, batch_size, device_type, device
+    raise NotImplementedError("TODO: 实现数据批次加载")
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
@@ -214,47 +215,40 @@ if ddp:
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
 def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            # TODO: ====== 评估阶段: 计算 loss ======
-            # 使用混合精度上下文 ctx 进行前向传播:
-            # with ctx:
-            #     logits, loss = model(X, Y)
-            # 其中 X 的形状为 (batch_size, block_size)，Y 的形状相同
-            # model(X, Y) 返回 (logits, loss)，logits 形状为 (b, t, vocab_size)
-            # 将 loss.item() 存储到 losses[k] 中
-            raise NotImplementedError("TODO: 在评估阶段执行前向传播并记录 loss")
-        out[split] = losses.mean()
-    model.train()
-    return out
+    # TODO: ====== 评估损失 ======
+    # 功能: 在 train 和 val 集上各运行 eval_iters 个 batch，计算平均 loss
+    # 返回: dict，如 {'train': 平均loss, 'val': 平均loss}
+    #
+    # 实现要点:
+    #   1. 将模型设为 eval 模式
+    #   2. 对 'train' 和 'val' 两个 split 分别:
+    #      - 循环 eval_iters 次，每次调用 get_batch 获取数据
+    #      - 在混合精度上下文 ctx 中执行前向传播: logits, loss = model(X, Y)
+    #      - 记录每次的 loss.item()
+    #      - 计算平均 loss
+    #   3. 将模型恢复为 train 模式
+    #
+    # 使用的变量: model, get_batch, eval_iters, ctx
+    raise NotImplementedError("TODO: 实现评估损失计算")
 
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
-    # TODO: ====== 学习率调度器：余弦退火 + 线性预热 ======
-    # 输入: it (int) - 当前训练迭代步数
+    # TODO: ====== 学习率调度器: 余弦退火 + 线性预热 ======
+    # 输入: it (int) — 当前训练迭代步数
     # 输出: 当前步的学习率 (float)
     #
-    # 学习率调度分三个阶段:
+    # 三个阶段:
+    #   (1) 线性预热 (it < warmup_iters):
+    #       lr 从接近 0 线性增长到 learning_rate
+    #   (2) 余弦退火 (warmup_iters <= it <= lr_decay_iters):
+    #       lr 按余弦曲线从 learning_rate 平滑衰减到 min_lr
+    #       公式: coeff = 0.5 * (1 + cos(π * decay_ratio))
+    #             lr = min_lr + coeff * (learning_rate - min_lr)
+    #   (3) 恒定最小值 (it > lr_decay_iters):
+    #       lr = min_lr
     #
-    # (1) 线性预热阶段 (it < warmup_iters):
-    #     lr = learning_rate * (it + 1) / (warmup_iters + 1)
-    #     从接近 0 线性增长到 learning_rate
-    #     目的: 训练初期用小学习率稳定梯度方向
-    #
-    # (2) 余弦退火阶段 (warmup_iters <= it <= lr_decay_iters):
-    #     decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-    #     coeff = 0.5 * (1.0 + cos(π * decay_ratio))  # coeff 从 1 平滑衰减到 0
-    #     lr = min_lr + coeff * (learning_rate - min_lr)
-    #     公式来源: SGDR (Stochastic Gradient Descent with Warm Restarts)
-    #
-    # (3) 恒定最小学习率阶段 (it > lr_decay_iters):
-    #     lr = min_lr
-    #
-    # 提示: 需要用到 math.cos 和 math.pi
+    # 使用的全局变量: learning_rate, warmup_iters, lr_decay_iters, min_lr
+    # 需要用到: math.cos, math.pi
     raise NotImplementedError("TODO: 实现余弦退火学习率调度器")
 
 # logging
@@ -314,45 +308,22 @@ while True:
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
 
         # TODO: ====== 核心训练步骤: 前向传播 + Loss 缩放 ======
-        # (1) 在混合精度上下文 ctx 中执行前向传播:
-        #     with ctx:
-        #         logits, loss = model(X, Y)
-        #     X 形状: (batch_size, block_size)，Y 形状: (batch_size, block_size)
-        #     logits 形状: (batch_size, block_size, vocab_size)
-        #     loss: 标量，当前 micro-batch 的交叉熵损失
-        #
-        # (2) 缩放 loss 以实现梯度累积:
-        #     loss = loss / gradient_accumulation_steps
-        #     原因: 将多个 micro-step 的梯度累加等价于一个大 batch 的梯度
-        #     数学上: ∇L_total = (1/N) * Σ ∇L_i，所以每个 micro-step 的 loss 需要除以 N
+        # 1. 在混合精度上下文 ctx 中执行前向传播: model(X, Y) → (logits, loss)
+        # 2. 将 loss 除以 gradient_accumulation_steps（梯度累积的数学等价）
         raise NotImplementedError("TODO: 执行前向传播并缩放 loss")
 
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
 
         # TODO: ====== 核心训练步骤: 反向传播 ======
-        # 使用 GradScaler 进行反向传播（支持 FP16 混合精度训练）:
-        #   scaler.scale(loss).backward()
-        # 这会:
-        #   (a) 将 loss 乘以一个缩放因子（防止 FP16 下梯度下溢）
-        #   (b) 调用 .backward() 计算所有参数的梯度
-        #   (c) 梯度会自动累积到 param.grad 中（因为没有 zero_grad）
-        raise NotImplementedError("TODO: 执行反向传播（带梯度缩放）")
+        # 使用 GradScaler 进行反向传播: scaler.scale(loss).backward()
+        # GradScaler 防止 FP16 下梯度下溢，梯度自动累积到 param.grad
+        raise NotImplementedError("TODO: 执行反向传播")
 
-    # TODO: ====== 核心训练步骤: 梯度裁剪 + 优化器更新 ======
-    # (1) 梯度裁剪 (如果 grad_clip != 0.0):
-    #     scaler.unscale_(optimizer)  # 先将梯度还原到真实尺度
-    #     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-    #     作用: 防止梯度爆炸，将梯度的全局范数限制在 grad_clip 以内
-    #
-    # (2) 优化器更新:
-    #     scaler.step(optimizer)  # 使用 AdamW 更新参数
-    #     scaler.update()         # 更新 GradScaler 的缩放因子
-    #
-    # (3) 清零梯度:
-    #     optimizer.zero_grad(set_to_none=True)
-    #     set_to_none=True 比 set_to_none=False 更省内存
-    #     因为它直接将 .grad 设为 None 而不是填充 0
+    # TODO: ====== 核心训练步骤: 梯度裁剪 + 优化器更新 + 梯度清零 ======
+    # 1. 梯度裁剪 (如果 grad_clip != 0.0): 先 unscale_，再 clip_grad_norm_
+    # 2. 优化器更新: scaler.step(optimizer) + scaler.update()
+    # 3. 梯度清零: optimizer.zero_grad(set_to_none=True)
     raise NotImplementedError("TODO: 执行梯度裁剪、优化器更新和梯度清零")
 
     # timing and logging
