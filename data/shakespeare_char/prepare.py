@@ -8,6 +8,8 @@ import os
 import pickle
 import requests
 import numpy as np
+import pickle
+
 
 # TODO: ====== 字符级分词器与数据预处理 ======
 #
@@ -58,4 +60,145 @@ import numpy as np
 #         return ''.join([itos[i] for i in l])
 #   - 每步打印进度信息: print(f"train has {len(train_ids):,} tokens")
 #   - pickle 保存用 'wb' 模式: with open(path, 'wb') as f: pickle.dump(meta, f)
-raise NotImplementedError("TODO: 实现字符级数据预处理")
+
+#下载数据集
+
+def main() -> None:
+    """
+    检查数据集是否存在，否则下载并进行分词处理
+    """
+    file_path = os.path.join(os.path.dirname(__file__), 'input.txt')
+    vocab_pool_S = dict()  #字符和token的对应字典
+    vocab_pool_T = dict()  # token和字符的对应字典
+
+    if os.path.exists(file_path):
+        print('数据集准备就绪')
+
+    else:
+        url = 'https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt'
+
+        response = requests.get(url=url,stream=True)
+        if response.status_code == 200:
+            with open(file_path,'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                print('下载完成')
+
+        else:
+                raise NotImplementedError('下载失败，检查状态码')
+
+    #生成词袋池
+    with open(file_path,'r') as f:
+
+        #读取文件
+        content = f.read()
+
+        #统计单词
+        words = content.split(' ')
+        print('数据集包含单词',len(set(words)))
+
+        #划分字符并编码词袋
+        chars = sorted(set(content))
+        vocab_pool_S = {char : i for i, char in enumerate(chars)}
+        vocab_pool_T = {i : char for i, char in enumerate(chars)}
+
+        # 划分数据集
+        train = content[:int(len(content)*0.9)]
+        val =  content[int(len(content)*0.9):]
+
+        #编码数据集
+        train_en = encode(train,vocab_pool_S)
+        print('训练集大小',len(train_en))
+        val_en = encode(val,vocab_pool_S)
+        print('验证集大小', len(val_en))
+
+        #转换数据类型
+        train_en = np.array(train_en,dtype=np.uint16)
+        val_en =np.array(val_en,dtype=np.uint16)
+
+        #保存文件
+        if os.path.exists('train.bin') and os.path.exists('val.bin'):
+            print('数据集已生成')
+        else:
+            train_en.tofile('train.bin')
+            val_en.tofile('val.bin')
+            print("已成功保存 train.bin 和 val.bin")
+
+
+    #存储词袋
+    with open('meta.pkl','wb') as f:
+
+        meta = {
+
+            "vobal_size" : len(vocab_pool_S),
+            "stoi" : vocab_pool_S,
+            "itos": vocab_pool_T
+
+        }
+
+        pickle.dump(meta,f)
+        print('词袋保存成功')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def encode(string:str,vocab_pool:dict)->list[int]:
+    """
+    将字符串编码到token
+
+    Args:
+        string:输入的待编码字符串     type:str
+        vocab_pool:词袋池           type:dict
+
+
+    Returns:
+        编码后的token列表            type:list
+
+    """
+
+    return [vocab_pool[char] for char in string]
+
+
+def decode(token:list,vocab_pool:dict)->str:
+    """
+    将token解码回字符串
+
+    Args:
+        token:输入的待解码token     type:list
+        vocab_pool:词袋池           type:dict
+
+
+    Returns:
+        解码后的token            type:str
+
+    """
+
+    return ''.join([vocab_pool[to] for to in token])
+
+
+
+
+
+if __name__ == "__main__":
+
+    main()
+
+
+
+
+
+
+
+
